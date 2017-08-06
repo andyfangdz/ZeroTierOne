@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,14 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #ifndef ZT_TOPOLOGY_HPP
@@ -74,6 +82,13 @@ public:
 	SharedPtr<Peer> getPeer(void *tPtr,const Address &zta);
 
 	/**
+	 * @param tPtr Thread pointer to be handed through to any callbacks called as a result of this call
+	 * @param zta ZeroTier address of peer
+	 * @return Identity or NULL identity if not found
+	 */
+	Identity getIdentity(void *tPtr,const Address &zta);
+
+	/**
 	 * Get a peer only if it is presently in memory (no disk cache)
 	 *
 	 * This also does not update the lastUsed() time for peers, which means
@@ -95,11 +110,11 @@ public:
 	/**
 	 * Get a Path object for a given local and remote physical address, creating if needed
 	 *
-	 * @param l Local address or NULL for 'any' or 'wildcard'
+	 * @param l Local socket
 	 * @param r Remote address
 	 * @return Pointer to canonicalized Path object
 	 */
-	inline SharedPtr<Path> getPath(const InetAddress &l,const InetAddress &r)
+	inline SharedPtr<Path> getPath(const int64_t l,const InetAddress &r)
 	{
 		Mutex::Lock _l(_paths_m);
 		SharedPtr<Path> &p = _paths[Path::HashKey(l,r)];
@@ -107,26 +122,6 @@ public:
 			p.setToUnsafe(new Path(l,r));
 		return p;
 	}
-
-	/**
-	 * Get the identity of a peer
-	 *
-	 * @param tPtr Thread pointer to be handed through to any callbacks called as a result of this call
-	 * @param zta ZeroTier address of peer
-	 * @return Identity or NULL Identity if not found
-	 */
-	Identity getIdentity(void *tPtr,const Address &zta);
-
-	/**
-	 * Cache an identity
-	 *
-	 * This is done automatically on addPeer(), and so is only useful for
-	 * cluster identity replication.
-	 *
-	 * @param tPtr Thread pointer to be handed through to any callbacks called as a result of this call
-	 * @param id Identity to cache
-	 */
-	void saveIdentity(void *tPtr,const Identity &id);
 
 	/**
 	 * Get the current best upstream peer
@@ -300,7 +295,7 @@ public:
 	/**
 	 * Clean and flush database
 	 */
-	void clean(uint64_t now);
+	void doPeriodicTasks(void *tPtr,uint64_t now);
 
 	/**
 	 * @param now Current time
@@ -335,12 +330,6 @@ public:
 		Address *a = (Address *)0;
 		SharedPtr<Peer> *p = (SharedPtr<Peer> *)0;
 		while (i.next(a,p)) {
-#ifdef ZT_TRACE
-			if (!(*p)) {
-				fprintf(stderr,"FATAL BUG: eachPeer() caught NULL peer for %s -- peer pointers in Topology should NEVER be NULL" ZT_EOL_S,a->toString().c_str());
-				abort();
-			}
-#endif
 			f(*this,*((const SharedPtr<Peer> *)p));
 		}
 	}

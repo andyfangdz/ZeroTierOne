@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,14 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #include <stdio.h>
@@ -31,6 +39,7 @@
 #include "Packet.hpp"
 #include "Peer.hpp"
 #include "Switch.hpp"
+#include "Trace.hpp"
 
 // Entry timeout -- make it fairly long since this is just to prevent stale buildup
 #define ZT_SELFAWARENESS_ENTRY_TIMEOUT 600000
@@ -61,7 +70,7 @@ SelfAwareness::SelfAwareness(const RuntimeEnvironment *renv) :
 {
 }
 
-void SelfAwareness::iam(void *tPtr,const Address &reporter,const InetAddress &receivedOnLocalAddress,const InetAddress &reporterPhysicalAddress,const InetAddress &myPhysicalAddress,bool trusted,uint64_t now)
+void SelfAwareness::iam(void *tPtr,const Address &reporter,const int64_t receivedOnLocalSocket,const InetAddress &reporterPhysicalAddress,const InetAddress &myPhysicalAddress,bool trusted,uint64_t now)
 {
 	const InetAddress::IpScope scope = myPhysicalAddress.ipScope();
 
@@ -69,11 +78,11 @@ void SelfAwareness::iam(void *tPtr,const Address &reporter,const InetAddress &re
 		return;
 
 	Mutex::Lock _l(_phy_m);
-	PhySurfaceEntry &entry = _phy[PhySurfaceKey(reporter,receivedOnLocalAddress,reporterPhysicalAddress,scope)];
+	PhySurfaceEntry &entry = _phy[PhySurfaceKey(reporter,receivedOnLocalSocket,reporterPhysicalAddress,scope)];
 
 	if ( (trusted) && ((now - entry.ts) < ZT_SELFAWARENESS_ENTRY_TIMEOUT) && (!entry.mySurface.ipsEqual(myPhysicalAddress)) ) {
 		// Changes to external surface reported by trusted peers causes path reset in this scope
-		TRACE("physical address %s for scope %u as seen from %s(%s) differs from %s, resetting paths in scope",myPhysicalAddress.toString().c_str(),(unsigned int)scope,reporter.toString().c_str(),reporterPhysicalAddress.toString().c_str(),entry.mySurface.toString().c_str());
+		RR->t->resettingPathsInScope(tPtr,reporter,reporterPhysicalAddress,myPhysicalAddress,scope);
 
 		entry.mySurface = myPhysicalAddress;
 		entry.ts = now;

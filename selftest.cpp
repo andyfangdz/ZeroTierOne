@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,14 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #include <stdio.h>
@@ -25,6 +33,7 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <thread>
 
 #include "node/Constants.hpp"
 #include "node/Hashtable.hpp"
@@ -48,7 +57,6 @@
 
 #include "osdep/OSUtils.hpp"
 #include "osdep/Phy.hpp"
-#include "osdep/Http.hpp"
 #include "osdep/PortMapper.hpp"
 #include "osdep/Thread.hpp"
 
@@ -143,12 +151,13 @@ static const C25519TestVector C25519_TEST_VECTORS[ZT_NUM_C25519_TEST_VECTORS] = 
 
 static int testCrypto()
 {
-	unsigned char buf1[16384];
-	unsigned char buf2[sizeof(buf1)],buf3[sizeof(buf1)];
+	static unsigned char buf1[16384];
+	static unsigned char buf2[sizeof(buf1)],buf3[sizeof(buf1)];
+	static char hexbuf[1024];
 
 	for(int i=0;i<3;++i) {
 		Utils::getSecureRandom(buf1,64);
-		std::cout << "[crypto] getSecureRandom: " << Utils::hex(buf1,64) << std::endl;
+		std::cout << "[crypto] getSecureRandom: " << Utils::hex(buf1,64,hexbuf) << std::endl;
 	}
 
 	std::cout << "[crypto] Testing Salsa20... "; std::cout.flush();
@@ -205,7 +214,7 @@ static int testCrypto()
 		}
 		uint64_t end = OSUtils::now();
 		SHA512::hash(buf1,bb,1234567);
-		std::cout << ((bytes / 1048576.0) / ((long double)(end - start) / 1024.0)) << " MiB/second (" << Utils::hex(buf1,16) << ')' << std::endl;
+		std::cout << ((bytes / 1048576.0) / ((long double)(end - start) / 1024.0)) << " MiB/second (" << Utils::hex(buf1,16,hexbuf) << ')' << std::endl;
 		::free((void *)bb);
 	}
 
@@ -257,7 +266,7 @@ static int testCrypto()
 		}
 		uint64_t end = OSUtils::now();
 		SHA512::hash(buf1,bb,1234567);
-		std::cout << ((bytes / 1048576.0) / ((long double)(end - start) / 1024.0)) << " MiB/second (" << Utils::hex(buf1,16) << ')' << std::endl;
+		std::cout << ((bytes / 1048576.0) / ((long double)(end - start) / 1024.0)) << " MiB/second (" << Utils::hex(buf1,16,hexbuf) << ')' << std::endl;
 		::free((void *)bb);
 	}
 
@@ -419,6 +428,7 @@ static int testIdentity()
 {
 	Identity id;
 	Buffer<512> buf;
+	char buf2[1024];
 
 	std::cout << "[identity] Validate known-good identity... "; std::cout.flush();
 	if (!id.fromString(KNOWN_GOOD_IDENTITY)) {
@@ -451,7 +461,7 @@ static int testIdentity()
 		uint64_t genstart = OSUtils::now();
 		id.generate();
 		uint64_t genend = OSUtils::now();
-		std::cout << "(took " << (genend - genstart) << "ms): " << id.toString(true) << std::endl;
+		std::cout << "(took " << (genend - genstart) << "ms): " << id.toString(true,buf2) << std::endl;
 		std::cout << "[identity] Locally validate identity: ";
 		if (id.locallyValidate()) {
 			std::cout << "PASS" << std::endl;
@@ -491,7 +501,7 @@ static int testIdentity()
 
 	{
 		Identity id2;
-		id2.fromString(id.toString(true).c_str());
+		id2.fromString(id.toString(true,buf2));
 		std::cout << "[identity] Serialize and deserialize (ASCII w/private): ";
 		if ((id == id2)&&(id2.locallyValidate())) {
 			std::cout << "PASS" << std::endl;
@@ -503,7 +513,7 @@ static int testIdentity()
 
 	{
 		Identity id2;
-		id2.fromString(id.toString(false).c_str());
+		id2.fromString(id.toString(false,buf2));
 		std::cout << "[identity] Serialize and deserialize (ASCII no private): ";
 		if ((id == id2)&&(id2.locallyValidate())) {
 			std::cout << "PASS" << std::endl;
@@ -518,16 +528,18 @@ static int testIdentity()
 
 static int testCertificate()
 {
+	char buf[4096];
+
 	Identity authority;
 	std::cout << "[certificate] Generating identity to act as authority... "; std::cout.flush();
 	authority.generate();
-	std::cout << authority.address().toString() << std::endl;
+	std::cout << authority.address().toString(buf) << std::endl;
 
 	Identity idA,idB;
 	std::cout << "[certificate] Generating identities A and B... "; std::cout.flush();
 	idA.generate();
 	idB.generate();
-	std::cout << idA.address().toString() << ", " << idB.address().toString() << std::endl;
+	std::cout << idA.address().toString(buf) << ", " << idB.address().toString(buf) << std::endl;
 
 	std::cout << "[certificate] Generating certificates A and B...";
 	CertificateOfMembership cA(10000,100,1,idA.address());
@@ -621,33 +633,34 @@ static int testPacket()
 	return 0;
 }
 
-static void _testExcept(int &depth)
-{
-	if (depth >= 16) {
-		throw std::runtime_error("LOL!");
-	} else {
-		++depth;
-		_testExcept(depth);
-	}
-}
-
 static int testOther()
 {
-	std::cout << "[other] Testing C++ exceptions... "; std::cout.flush();
-	int depth = 0;
-	try {
-		_testExcept(depth);
-	} catch (std::runtime_error &e) {
-		if (depth == 16) {
-			std::cout << "OK" << std::endl;
-		} else {
-			std::cout << "ERROR (depth not 16)" << std::endl;
-			return -1;
-		}
-	} catch ( ... ) {
-		std::cout << "ERROR (exception not std::runtime_error)" << std::endl;
+	char buf[1024];
+	char buf2[4096];
+	char buf3[1024];
+
+	std::cout << "[other] Testing hex/unhex... "; std::cout.flush();
+	Utils::getSecureRandom(buf,(unsigned int)sizeof(buf));
+	Utils::hex(buf,(unsigned int)sizeof(buf),buf2);
+	Utils::unhex(buf2,buf3,(unsigned int)sizeof(buf3));
+	if (memcmp(buf,buf3,sizeof(buf)) == 0) {
+		std::cout << "PASS" << std::endl;
+	} else {
+		std::cout << "FAIL!" << std::endl;
+		buf2[78] = 0;
+		std::cout << buf2 << std::endl;
+		Utils::hex(buf3,(unsigned int)sizeof(buf3),buf2);
+		buf2[78] = 0;
+		std::cout << buf2 << std::endl;
 		return -1;
 	}
+
+	std::cout << "[other] Testing InetAddress encode/decode..."; std::cout.flush();
+	std::cout << " " << InetAddress("127.0.0.1/9993").toString(buf);
+	std::cout << " " << InetAddress("feed:dead:babe:dead:beef:f00d:1234:5678/12345").toString(buf);
+	std::cout << " " << InetAddress("0/9993").toString(buf);
+	std::cout << " " << InetAddress("").toString(buf);
+	std::cout << std::endl;
 
 #if 0
 	std::cout << "[other] Testing Hashtable... "; std::cout.flush();
@@ -823,7 +836,7 @@ static int testOther()
 		memset(key, 0, sizeof(key));
 		memset(value, 0, sizeof(value));
 		for(unsigned int q=0;q<32;++q) {
-			Utils::snprintf(key[q],16,"%.8lx",(unsigned long)(rand() % 1000) + (q * 1000));
+			Utils::hex((uint32_t)((rand() % 1000) + (q * 1000)),key[q]);
 			int r = rand() % 128;
 			for(int x=0;x<r;++x)
 				value[q][x] = ("0123456789\0\t\r\n= ")[rand() % 16];
@@ -1018,51 +1031,6 @@ static int testPhy()
 	return 0;
 }
 
-/*
-static int testHttp()
-{
-	std::map<std::string,std::string> requestHeaders,responseHeaders;
-	std::string responseBody;
-
-	InetAddress downloadZerotierDotCom;
-	std::vector<InetAddress> rr(OSUtils::resolve("download.zerotier.com"));
-	if (rr.empty()) {
-		std::cout << "[http] Resolve of download.zerotier.com failed, skipping." << std::endl;
-		return 0;
-	} else {
-		for(std::vector<InetAddress>::iterator r(rr.begin());r!=rr.end();++r) {
-			std::cout << "[http] download.zerotier.com: " << r->toString() << std::endl;
-			if (r->isV4())
-				downloadZerotierDotCom = *r;
-		}
-	}
-	downloadZerotierDotCom.setPort(80);
-
-	std::cout << "[http] GET http://download.zerotier.com/dev/1k @" << downloadZerotierDotCom.toString() << " ... "; std::cout.flush();
-	requestHeaders["Host"] = "download.zerotier.com";
-	unsigned int sc = Http::GET(1024 * 1024 * 16,60000,reinterpret_cast<const struct sockaddr *>(&downloadZerotierDotCom),"/dev/1k",requestHeaders,responseHeaders,responseBody);
-	std::cout << sc << " " << responseBody.length() << " bytes ";
-	if (sc == 0)
-		std::cout << "ERROR: " << responseBody << std::endl;
-	else std::cout << "DONE" << std::endl;
-
-	std::cout << "[http] GET http://download.zerotier.com/dev/4m @" << downloadZerotierDotCom.toString() << " ... "; std::cout.flush();
-	requestHeaders["Host"] = "download.zerotier.com";
-	sc = Http::GET(1024 * 1024 * 16,60000,reinterpret_cast<const struct sockaddr *>(&downloadZerotierDotCom),"/dev/4m",requestHeaders,responseHeaders,responseBody);
-	std::cout << sc << " " << responseBody.length() << " bytes ";
-	if (sc == 0)
-		std::cout << "ERROR: " << responseBody << std::endl;
-	else std::cout << "DONE" << std::endl;
-
-	downloadZerotierDotCom = InetAddress("1.0.0.1/1234");
-	std::cout << "[http] GET @" << downloadZerotierDotCom.toString() << " ... "; std::cout.flush();
-	sc = Http::GET(1024 * 1024 * 16,2500,reinterpret_cast<const struct sockaddr *>(&downloadZerotierDotCom),"/dev/4m",requestHeaders,responseHeaders,responseBody);
-	std::cout << sc << " (should be 0, time out)" << std::endl;
-
-	return 0;
-}
-*/
-
 #ifdef __WINDOWS__
 int __cdecl _tmain(int argc, _TCHAR* argv[])
 #else
@@ -1114,6 +1082,8 @@ int main(int argc,char **argv)
 	*/
 
 	std::cout << "[info] sizeof(void *) == " << sizeof(void *) << std::endl;
+	std::cout << "[info] OSUtils::now() == " << OSUtils::now() << std::endl;
+	std::cout << "[info] hardware concurrency == " << std::thread::hardware_concurrency() << std::endl;
 	std::cout << "[info] sizeof(NetworkConfig) == " << sizeof(ZeroTier::NetworkConfig) << std::endl;
 
 	srand((unsigned int)time(0));
@@ -1125,7 +1095,6 @@ int main(int argc,char **argv)
 	r |= testIdentity();
 	r |= testCertificate();
 	r |= testPhy();
-	//r |= testHttp();
 	//*/
 
 	if (r)

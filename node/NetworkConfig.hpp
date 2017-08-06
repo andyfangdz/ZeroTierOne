@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,14 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #ifndef ZT_NETWORKCONFIG_HPP
@@ -151,6 +159,8 @@ namespace ZeroTier {
 #define ZT_NETWORKCONFIG_DICT_KEY_REVISION "r"
 // address of member
 #define ZT_NETWORKCONFIG_DICT_KEY_ISSUED_TO "id"
+// remote trace target
+#define ZT_NETWORKCONFIG_DICT_KEY_REMOTE_TRACE_TARGET "tt"
 // flags(hex)
 #define ZT_NETWORKCONFIG_DICT_KEY_FLAGS "f"
 // integer(hex)
@@ -159,6 +169,8 @@ namespace ZeroTier {
 #define ZT_NETWORKCONFIG_DICT_KEY_TYPE "t"
 // text
 #define ZT_NETWORKCONFIG_DICT_KEY_NAME "n"
+// network MTU
+#define ZT_NETWORKCONFIG_DICT_KEY_MTU "mtu"
 // credential time max delta in ms
 #define ZT_NETWORKCONFIG_DICT_KEY_CREDENTIAL_TIME_MAX_DELTA "ctmd"
 // binary serialized certificate of membership
@@ -250,32 +262,32 @@ public:
 	/**
 	 * @return True if passive bridging is allowed (experimental)
 	 */
-	inline bool allowPassiveBridging() const throw() { return ((this->flags & ZT_NETWORKCONFIG_FLAG_ALLOW_PASSIVE_BRIDGING) != 0); }
+	inline bool allowPassiveBridging() const { return ((this->flags & ZT_NETWORKCONFIG_FLAG_ALLOW_PASSIVE_BRIDGING) != 0); }
 
 	/**
 	 * @return True if broadcast (ff:ff:ff:ff:ff:ff) address should work on this network
 	 */
-	inline bool enableBroadcast() const throw() { return ((this->flags & ZT_NETWORKCONFIG_FLAG_ENABLE_BROADCAST) != 0); }
+	inline bool enableBroadcast() const { return ((this->flags & ZT_NETWORKCONFIG_FLAG_ENABLE_BROADCAST) != 0); }
 
 	/**
 	 * @return True if IPv6 NDP emulation should be allowed for certain "magic" IPv6 address patterns
 	 */
-	inline bool ndpEmulation() const throw() { return ((this->flags & ZT_NETWORKCONFIG_FLAG_ENABLE_IPV6_NDP_EMULATION) != 0); }
+	inline bool ndpEmulation() const { return ((this->flags & ZT_NETWORKCONFIG_FLAG_ENABLE_IPV6_NDP_EMULATION) != 0); }
 
 	/**
 	 * @return True if frames should not be compressed
 	 */
-	inline bool disableCompression() const throw() { return ((this->flags & ZT_NETWORKCONFIG_FLAG_DISABLE_COMPRESSION) != 0); }
+	inline bool disableCompression() const { return ((this->flags & ZT_NETWORKCONFIG_FLAG_DISABLE_COMPRESSION) != 0); }
 
 	/**
 	 * @return Network type is public (no access control)
 	 */
-	inline bool isPublic() const throw() { return (this->type == ZT_NETWORK_TYPE_PUBLIC); }
+	inline bool isPublic() const { return (this->type == ZT_NETWORK_TYPE_PUBLIC); }
 
 	/**
 	 * @return Network type is private (certificate access control)
 	 */
-	inline bool isPrivate() const throw() { return (this->type == ZT_NETWORK_TYPE_PRIVATE); }
+	inline bool isPrivate() const { return (this->type == ZT_NETWORK_TYPE_PRIVATE); }
 
 	/**
 	 * @return ZeroTier addresses of devices on this network designated as active bridges
@@ -349,7 +361,7 @@ public:
 	/**
 	 * @return True if this network config is non-NULL
 	 */
-	inline operator bool() const throw() { return (networkId != 0); }
+	inline operator bool() const { return (networkId != 0); }
 
 	inline bool operator==(const NetworkConfig &nc) const { return (memcmp(this,&nc,sizeof(NetworkConfig)) == 0); }
 	inline bool operator!=(const NetworkConfig &nc) const { return (!(*this == nc)); }
@@ -398,35 +410,6 @@ public:
 		return (Tag *)0;
 	}
 
-	/*
-	inline void dump() const
-	{
-		printf("networkId==%.16llx\n",networkId);
-		printf("timestamp==%llu\n",timestamp);
-		printf("credentialTimeMaxDelta==%llu\n",credentialTimeMaxDelta);
-		printf("revision==%llu\n",revision);
-		printf("issuedTo==%.10llx\n",issuedTo.toInt());
-		printf("multicastLimit==%u\n",multicastLimit);
-		printf("flags=%.8lx\n",(unsigned long)flags);
-		printf("specialistCount==%u\n",specialistCount);
-		for(unsigned int i=0;i<specialistCount;++i)
-			printf("  specialists[%u]==%.16llx\n",i,specialists[i]);
-		printf("routeCount==%u\n",routeCount);
-		for(unsigned int i=0;i<routeCount;++i) {
-			printf("  routes[i].target==%s\n",reinterpret_cast<const InetAddress *>(&(routes[i].target))->toString().c_str());
-			printf("  routes[i].via==%s\n",reinterpret_cast<const InetAddress *>(&(routes[i].via))->toIpString().c_str());
-			printf("  routes[i].flags==%.4x\n",(unsigned int)routes[i].flags);
-			printf("  routes[i].metric==%u\n",(unsigned int)routes[i].metric);
-		}
-		printf("staticIpCount==%u\n",staticIpCount);
-		for(unsigned int i=0;i<staticIpCount;++i)
-			printf("  staticIps[i]==%s\n",staticIps[i].toString().c_str());
-		printf("ruleCount==%u\n",ruleCount);
-		printf("name==%s\n",name);
-		printf("com==%s\n",com.toString().c_str());
-	}
-	*/
-
 	/**
 	 * Network ID that this configuration applies to
 	 */
@@ -453,9 +436,19 @@ public:
 	Address issuedTo;
 
 	/**
+	 * If non-NULL, remote traces related to this network are sent here
+	 */
+	Address remoteTraceTarget;
+
+	/**
 	 * Flags (64-bit)
 	 */
 	uint64_t flags;
+
+	/**
+	 * Network MTU
+	 */
+	unsigned int mtu;
 
 	/**
 	 * Maximum number of recipients per multicast (not including active bridges)

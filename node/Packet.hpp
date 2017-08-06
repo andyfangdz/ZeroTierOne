@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,14 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #ifndef ZT_N_PACKET_HPP
@@ -34,12 +42,6 @@
 #include "Utils.hpp"
 #include "Buffer.hpp"
 
-//#ifdef ZT_USE_SYSTEM_LZ4
-//#include <lz4.h>
-//#else
-//#include "../ext/lz4/lz4.h"
-//#endif
-
 /**
  * Protocol version -- incremented only for major changes
  *
@@ -53,7 +55,7 @@
  * 4 - 0.6.0 ... 1.0.6
  *   + BREAKING CHANGE: New identity format based on hashcash design
  * 5 - 1.1.0 ... 1.1.5
- *   + Supports circuit test, proof of work, and echo
+ *   + Supports echo
  *   + Supports in-band world (root server definition) updates
  *   + Clustering! (Though this will work with protocol v4 clients.)
  *   + Otherwise backward compatible with protocol v4
@@ -422,8 +424,7 @@ public:
 		}
 
 		template<unsigned int C2>
-		Fragment(const Buffer<C2> &b)
-	 		throw(std::out_of_range) :
+		Fragment(const Buffer<C2> &b) :
 	 		Buffer<ZT_PROTO_MAX_PACKET_LENGTH>(b)
 		{
 		}
@@ -441,10 +442,8 @@ public:
 		 * @param fragLen Length of fragment in bytes
 		 * @param fragNo Which fragment (>= 1, since 0 is Packet with end chopped off)
 		 * @param fragTotal Total number of fragments (including 0)
-		 * @throws std::out_of_range Packet size would exceed buffer
 		 */
 		Fragment(const Packet &p,unsigned int fragStart,unsigned int fragLen,unsigned int fragNo,unsigned int fragTotal)
-			throw(std::out_of_range)
 		{
 			init(p,fragStart,fragLen,fragNo,fragTotal);
 		}
@@ -457,13 +456,11 @@ public:
 		 * @param fragLen Length of fragment in bytes
 		 * @param fragNo Which fragment (>= 1, since 0 is Packet with end chopped off)
 		 * @param fragTotal Total number of fragments (including 0)
-		 * @throws std::out_of_range Packet size would exceed buffer
 		 */
 		inline void init(const Packet &p,unsigned int fragStart,unsigned int fragLen,unsigned int fragNo,unsigned int fragTotal)
-			throw(std::out_of_range)
 		{
 			if ((fragStart + fragLen) > p.size())
-				throw std::out_of_range("Packet::Fragment: tried to construct fragment of packet past its length");
+				throw ZT_EXCEPTION_OUT_OF_BOUNDS;
 			setSize(fragLen + ZT_PROTO_MIN_FRAGMENT_LENGTH);
 
 			// NOTE: this copies both the IV/packet ID and the destination address.
@@ -938,127 +935,11 @@ public:
 		 * be used unless they are blacklisted explicitly or unless flag 0x01
 		 * is set.
 		 *
-		 * Only a subset of this functionality is currently implemented: basic
-		 * path pushing and learning. Blacklisting and trust are not fully
-		 * implemented yet (encryption is still always used).
-		 *
 		 * OK and ERROR are not generated.
 		 */
 		VERB_PUSH_DIRECT_PATHS = 0x10,
 
-		/**
-		 * Source-routed circuit test message:
-		 *   <[5] address of originator of circuit test>
-		 *   <[2] 16-bit flags>
-		 *   <[8] 64-bit timestamp>
-		 *   <[8] 64-bit test ID (arbitrary, set by tester)>
-		 *   <[2] 16-bit originator credential length (includes type)>
-		 *   [[1] originator credential type (for authorizing test)]
-		 *   [[...] originator credential]
-		 *   <[2] 16-bit length of additional fields>
-		 *   [[...] additional fields]
-		 *   [ ... end of signed portion of request ... ]
-		 *   <[2] 16-bit length of signature of request>
-		 *   <[...] signature of request by originator>
-		 *   <[2] 16-bit length of additional fields>
-		 *   [[...] additional fields]
-		 *   <[...] next hop(s) in path>
-		 *
-		 * Flags:
-		 *   0x01 - Report back to originator at all hops
-		 *   0x02 - Report back to originator at last hop
-		 *
-		 * Originator credential types:
-		 *   0x01 - 64-bit network ID for which originator is controller
-		 *
-		 * Path record format:
-		 *   <[1] 8-bit flags (unused, must be zero)>
-		 *   <[1] 8-bit breadth (number of next hops)>
-		 *   <[...] one or more ZeroTier addresses of next hops>
-		 *
-		 * The circuit test allows a device to send a message that will traverse
-		 * the network along a specified path, with each hop optionally reporting
-		 * back to the tester via VERB_CIRCUIT_TEST_REPORT.
-		 *
-		 * Each circuit test packet includes a digital signature by the originator
-		 * of the request, as well as a credential by which that originator claims
-		 * authorization to perform the test. Currently this signature is ed25519,
-		 * but in the future flags might be used to indicate an alternative
-		 * algorithm. For example, the originator might be a network controller.
-		 * In this case the test might be authorized if the recipient is a member
-		 * of a network controlled by it, and if the previous hop(s) are also
-		 * members. Each hop may include its certificate of network membership.
-		 *
-		 * Circuit test paths consist of a series of records. When a node receives
-		 * an authorized circuit test, it:
-		 *
-		 * (1) Reports back to circuit tester as flags indicate
-		 * (2) Reads and removes the next hop from the packet's path
-		 * (3) Sends the packet along to next hop(s), if any.
-		 *
-		 * It is perfectly legal for a path to contain the same hop more than
-		 * once. In fact, this can be a very useful test to determine if a hop
-		 * can be reached bidirectionally and if so what that connectivity looks
-		 * like.
-		 *
-		 * The breadth field in source-routed path records allows a hop to forward
-		 * to more than one recipient, allowing the tester to specify different
-		 * forms of graph traversal in a test.
-		 *
-		 * There is no hard limit to the number of hops in a test, but it is
-		 * practically limited by the maximum size of a (possibly fragmented)
-		 * ZeroTier packet.
-		 *
-		 * Support for circuit tests is optional. If they are not supported, the
-		 * node should respond with an UNSUPPORTED_OPERATION error. If a circuit
-		 * test request is not authorized, it may be ignored or reported as
-		 * an INVALID_REQUEST. No OK messages are generated, but TEST_REPORT
-		 * messages may be sent (see below).
-		 *
-		 * ERROR packet format:
-		 *   <[8] 64-bit timestamp (echoed from original>
-		 *   <[8] 64-bit test ID (echoed from original)>
-		 */
-		VERB_CIRCUIT_TEST = 0x11,
-
-		/**
-		 * Circuit test hop report:
-		 *   <[8] 64-bit timestamp (echoed from original test)>
-		 *   <[8] 64-bit test ID (echoed from original test)>
-		 *   <[8] 64-bit reserved field (set to 0, currently unused)>
-		 *   <[1] 8-bit vendor ID (set to 0, currently unused)>
-		 *   <[1] 8-bit reporter protocol version>
-		 *   <[1] 8-bit reporter software major version>
-		 *   <[1] 8-bit reporter software minor version>
-		 *   <[2] 16-bit reporter software revision>
-		 *   <[2] 16-bit reporter OS/platform or 0 if not specified>
-		 *   <[2] 16-bit reporter architecture or 0 if not specified>
-		 *   <[2] 16-bit error code (set to 0, currently unused)>
-		 *   <[8] 64-bit report flags>
-		 *   <[8] 64-bit packet ID of received CIRCUIT_TEST packet>
-		 *   <[5] upstream ZeroTier address from which CIRCUIT_TEST was received>
-		 *   <[1] 8-bit packet hop count of received CIRCUIT_TEST>
-		 *   <[...] local wire address on which packet was received>
-		 *   <[...] remote wire address from which packet was received>
-		 *   <[2] 16-bit path link quality of path over which packet was received>
-		 *   <[1] 8-bit number of next hops (breadth)>
-		 *   <[...] next hop information>
-		 *
-		 * Next hop information record format:
-		 *   <[5] ZeroTier address of next hop>
-		 *   <[...] current best direct path address, if any, 0 if none>
-		 *
-		 * Report flags:
-		 *   0x1 - Upstream peer in circuit test path allowed in path (e.g. network COM valid)
-		 *
-		 * Circuit test reports can be sent by hops in a circuit test to report
-		 * back results. They should include information about the sender as well
-		 * as about the paths to which next hops are being sent.
-		 *
-		 * If a test report is received and no circuit test was sent, it should be
-		 * ignored. This message generates no OK or ERROR response.
-		 */
-		VERB_CIRCUIT_TEST_REPORT = 0x12,
+		// 0x11, 0x12 -- deprecated
 
 		/**
 		 * A message with arbitrary user-definable content:
@@ -1073,7 +954,23 @@ public:
 		 * ZeroTier, Inc. itself. We recommend making up random ones for your own
 		 * implementations.
 		 */
-		VERB_USER_MESSAGE = 0x14
+		VERB_USER_MESSAGE = 0x14,
+
+		/**
+		 * A trace for remote debugging or diagnostics:
+		 *   <[...] null-terminated dictionary containing trace information>
+		 *  [<[...] additional null-terminated dictionaries>]
+		 *
+		 * This message contains a remote trace event. Remote trace events can
+		 * be sent to observers configured at the network level for those that
+		 * pertain directly to actiity on a network, or to global observers if
+		 * locally configured.
+		 *
+		 * The instance ID is a random 64-bit value generated by each ZeroTier
+		 * node on startup. This is helpful in identifying traces from different
+		 * members of a cluster.
+		 */
+		VERB_REMOTE_TRACE = 0x15
 	};
 
 	/**
@@ -1108,11 +1005,6 @@ public:
 		/* Multicasts to this group are not wanted */
 		ERROR_UNWANTED_MULTICAST = 0x08
 	};
-
-#ifdef ZT_TRACE
-	static const char *verbString(Verb v);
-	static const char *errorString(ErrorCode e);
-#endif
 
 	template<unsigned int C2>
 	Packet(const Buffer<C2> &b) :
@@ -1372,12 +1264,6 @@ public:
 
 	/**
 	 * Encrypt/decrypt a separately armored portion of a packet
-	 *
-	 * This currently uses Salsa20/12, but any message that uses this should
-	 * incorporate a cipher selector to permit this to be changed later. To
-	 * ensure that key stream is not reused, the key is slightly altered for
-	 * this use case and the same initial 32 keystream bytes that are taken
-	 * for MAC in ordinary armor() are also skipped here.
 	 *
 	 * This is currently only used to mask portions of HELLO as an extra
 	 * security precation since most of that message is sent in the clear.

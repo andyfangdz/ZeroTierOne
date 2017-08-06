@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,14 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #include "Constants.hpp"
@@ -60,15 +68,17 @@ Topology::Topology(const RuntimeEnvironment *renv,void *tPtr) :
 	_trustedPathCount(0),
 	_amRoot(false)
 {
-	try {
-		World cachedPlanet;
-		std::string buf(RR->node->dataStoreGet(tPtr,"planet"));
-		if (buf.length() > 0) {
-			Buffer<ZT_WORLD_MAX_SERIALIZED_LENGTH> dswtmp(buf.data(),(unsigned int)buf.length());
-			cachedPlanet.deserialize(dswtmp,0);
-		}
-		addWorld(tPtr,cachedPlanet,false);
-	} catch ( ... ) {}
+	uint8_t tmp[ZT_WORLD_MAX_SERIALIZED_LENGTH];
+	uint64_t idtmp[2];
+	idtmp[0] = 0; idtmp[1] = 0;
+	int n = RR->node->stateObjectGet(tPtr,ZT_STATE_OBJECT_PLANET,idtmp,tmp,sizeof(tmp));
+	if (n > 0) {
+		try {
+			World cachedPlanet;
+			cachedPlanet.deserialize(Buffer<ZT_WORLD_MAX_SERIALIZED_LENGTH>(tmp,(unsigned int)n),0);
+			addWorld(tPtr,cachedPlanet,false);
+		} catch ( ... ) {} // ignore invalid cached planets
+	}
 
 	World defaultPlanet;
 	{
@@ -80,15 +90,6 @@ Topology::Topology(const RuntimeEnvironment *renv,void *tPtr) :
 
 SharedPtr<Peer> Topology::addPeer(void *tPtr,const SharedPtr<Peer> &peer)
 {
-#ifdef ZT_TRACE
-	if ((!peer)||(peer->address() == RR->identity.address())) {
-		if (!peer)
-			fprintf(stderr,"FATAL BUG: addPeer() caught attempt to add NULL peer" ZT_EOL_S);
-		else fprintf(stderr,"FATAL BUG: addPeer() caught attempt to add peer for self" ZT_EOL_S);
-		abort();
-	}
-#endif
-
 	SharedPtr<Peer> np;
 	{
 		Mutex::Lock _l(_peers_m);
@@ -97,18 +98,13 @@ SharedPtr<Peer> Topology::addPeer(void *tPtr,const SharedPtr<Peer> &peer)
 			hp = peer;
 		np = hp;
 	}
-
-	saveIdentity(tPtr,np->identity());
-
 	return np;
 }
 
 SharedPtr<Peer> Topology::getPeer(void *tPtr,const Address &zta)
 {
-	if (zta == RR->identity.address()) {
-		TRACE("BUG: ignored attempt to getPeer() for self, returned NULL");
+	if (zta == RR->identity.address())
 		return SharedPtr<Peer>();
-	}
 
 	{
 		Mutex::Lock _l(_peers_m);
@@ -117,19 +113,23 @@ SharedPtr<Peer> Topology::getPeer(void *tPtr,const Address &zta)
 			return *ap;
 	}
 
+	/*
 	try {
-		Identity id(_getIdentity(tPtr,zta));
-		if (id) {
-			SharedPtr<Peer> np(new Peer(RR,RR->identity,id));
-			{
-				Mutex::Lock _l(_peers_m);
-				SharedPtr<Peer> &ap = _peers[zta];
-				if (!ap)
-					ap.swap(np);
+		char buf[ZT_PEER_MAX_SERIALIZED_STATE_SIZE];
+		uint64_t idbuf[2]; idbuf[0] = zta.toInt(); idbuf[1] = 0;
+		int len = RR->node->stateObjectGet(tPtr,ZT_STATE_OBJECT_PEER,idbuf,buf,(unsigned int)sizeof(buf));
+		if (len > 0) {
+			Mutex::Lock _l(_peers_m);
+			SharedPtr<Peer> &ap = _peers[zta];
+			if (ap)
 				return ap;
-			}
+			ap = Peer::createFromStateUpdate(RR,tPtr,buf,len);
+			if (!ap)
+				_peers.erase(zta);
+			return ap;
 		}
-	} catch ( ... ) {} // invalid identity on disk?
+	} catch ( ... ) {} // ignore invalid identities or other strage failures
+	*/
 
 	return SharedPtr<Peer>();
 }
@@ -144,16 +144,7 @@ Identity Topology::getIdentity(void *tPtr,const Address &zta)
 		if (ap)
 			return (*ap)->identity();
 	}
-	return _getIdentity(tPtr,zta);
-}
-
-void Topology::saveIdentity(void *tPtr,const Identity &id)
-{
-	if (id) {
-		char p[128];
-		Utils::snprintf(p,sizeof(p),"iddb.d/%.10llx",(unsigned long long)id.address().toInt());
-		RR->node->dataStorePut(tPtr,p,id.toString(false),false);
-	}
+	return Identity();
 }
 
 SharedPtr<Peer> Topology::getUpstreamPeer(const Address *avoid,unsigned int avoidCount,bool strictAvoid)
@@ -319,19 +310,13 @@ bool Topology::addWorld(void *tPtr,const World &newWorld,bool alwaysAcceptNew)
 		return false;
 	}
 
-	char savePath[64];
-	if (existing->type() == World::TYPE_MOON) {
-		Utils::snprintf(savePath,sizeof(savePath),"moons.d/%.16llx.moon",existing->id());
-	} else {
-		Utils::scopy(savePath,sizeof(savePath),"planet");
-	}
 	try {
-		Buffer<ZT_WORLD_MAX_SERIALIZED_LENGTH> dswtmp;
-		existing->serialize(dswtmp,false);
-		RR->node->dataStorePut(tPtr,savePath,dswtmp.data(),dswtmp.size(),false);
-	} catch ( ... ) {
-		RR->node->dataStoreDelete(tPtr,savePath);
-	}
+		Buffer<ZT_WORLD_MAX_SERIALIZED_LENGTH> sbuf;
+		existing->serialize(sbuf,false);
+		uint64_t idtmp[2];
+		idtmp[0] = existing->id(); idtmp[1] = 0;
+		RR->node->stateObjectPut(tPtr,(existing->type() == World::TYPE_PLANET) ? ZT_STATE_OBJECT_PLANET : ZT_STATE_OBJECT_MOON,idtmp,sbuf.data(),sbuf.size());
+	} catch ( ... ) {}
 
 	_memoizeUpstreams(tPtr);
 
@@ -340,21 +325,20 @@ bool Topology::addWorld(void *tPtr,const World &newWorld,bool alwaysAcceptNew)
 
 void Topology::addMoon(void *tPtr,const uint64_t id,const Address &seed)
 {
-	char savePath[64];
-	Utils::snprintf(savePath,sizeof(savePath),"moons.d/%.16llx.moon",id);
-
-	try {
-		std::string moonBin(RR->node->dataStoreGet(tPtr,savePath));
-		if (moonBin.length() > 1) {
-			Buffer<ZT_WORLD_MAX_SERIALIZED_LENGTH> wtmp(moonBin.data(),(unsigned int)moonBin.length());
+	char tmp[ZT_WORLD_MAX_SERIALIZED_LENGTH];
+	uint64_t idtmp[2];
+	idtmp[0] = id; idtmp[1] = 0;
+	int n = RR->node->stateObjectGet(tPtr,ZT_STATE_OBJECT_MOON,idtmp,tmp,sizeof(tmp));
+	if (n > 0) {
+		try {
 			World w;
-			w.deserialize(wtmp);
+			w.deserialize(Buffer<ZT_WORLD_MAX_SERIALIZED_LENGTH>(tmp,(unsigned int)n));
 			if ((w.type() == World::TYPE_MOON)&&(w.id() == id)) {
 				addWorld(tPtr,w,true);
 				return;
 			}
-		}
-	} catch ( ... ) {}
+		} catch ( ... ) {}
+	}
 
 	if (seed) {
 		Mutex::Lock _l(_upstreams_m);
@@ -373,9 +357,9 @@ void Topology::removeMoon(void *tPtr,const uint64_t id)
 		if (m->id() != id) {
 			nm.push_back(*m);
 		} else {
-			char savePath[64];
-			Utils::snprintf(savePath,sizeof(savePath),"moons.d/%.16llx.moon",id);
-			RR->node->dataStoreDelete(tPtr,savePath);
+			uint64_t idtmp[2];
+			idtmp[0] = id; idtmp[1] = 0;
+			RR->node->stateObjectDelete(tPtr,ZT_STATE_OBJECT_MOON,idtmp);
 		}
 	}
 	_moons.swap(nm);
@@ -390,7 +374,7 @@ void Topology::removeMoon(void *tPtr,const uint64_t id)
 	_memoizeUpstreams(tPtr);
 }
 
-void Topology::clean(uint64_t now)
+void Topology::doPeriodicTasks(void *tPtr,uint64_t now)
 {
 	{
 		Mutex::Lock _l1(_peers_m);
@@ -403,6 +387,7 @@ void Topology::clean(uint64_t now)
 				_peers.erase(*a);
 		}
 	}
+
 	{
 		Mutex::Lock _l(_paths_m);
 		Hashtable< Path::HashKey,SharedPtr<Path> >::Iterator i(_paths);
@@ -413,19 +398,6 @@ void Topology::clean(uint64_t now)
 				_paths.erase(*k);
 		}
 	}
-}
-
-Identity Topology::_getIdentity(void *tPtr,const Address &zta)
-{
-	char p[128];
-	Utils::snprintf(p,sizeof(p),"iddb.d/%.10llx",(unsigned long long)zta.toInt());
-	std::string ids(RR->node->dataStoreGet(tPtr,p));
-	if (ids.length() > 0) {
-		try {
-			return Identity(ids);
-		} catch ( ... ) {} // ignore invalid IDs
-	}
-	return Identity();
 }
 
 void Topology::_memoizeUpstreams(void *tPtr)
@@ -440,10 +412,8 @@ void Topology::_memoizeUpstreams(void *tPtr)
 		} else if (std::find(_upstreamAddresses.begin(),_upstreamAddresses.end(),i->identity.address()) == _upstreamAddresses.end()) {
 			_upstreamAddresses.push_back(i->identity.address());
 			SharedPtr<Peer> &hp = _peers[i->identity.address()];
-			if (!hp) {
+			if (!hp)
 				hp = new Peer(RR,RR->identity,i->identity);
-				saveIdentity(tPtr,i->identity);
-			}
 		}
 	}
 
@@ -454,10 +424,8 @@ void Topology::_memoizeUpstreams(void *tPtr)
 			} else if (std::find(_upstreamAddresses.begin(),_upstreamAddresses.end(),i->identity.address()) == _upstreamAddresses.end()) {
 				_upstreamAddresses.push_back(i->identity.address());
 				SharedPtr<Peer> &hp = _peers[i->identity.address()];
-				if (!hp) {
+				if (!hp)
 					hp = new Peer(RR,RR->identity,i->identity);
-					saveIdentity(tPtr,i->identity);
-				}
 			}
 		}
 	}

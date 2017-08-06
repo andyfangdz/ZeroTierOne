@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,14 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #include <stdint.h>
@@ -312,6 +320,7 @@ union LZ4_streamDecode_u {
 #define FORCE_INLINE static inline
 #endif
 
+#if 0
 #if (defined(__GNUC__) && (__GNUC__ >= 3)) || (defined(__INTEL_COMPILER) && (__INTEL_COMPILER >= 800)) || defined(__clang__)
 #  define expect(expr,value)    (__builtin_expect ((expr),(value)) )
 #else
@@ -320,6 +329,7 @@ union LZ4_streamDecode_u {
 
 #define likely(expr)     expect((expr) != 0, 1)
 #define unlikely(expr)   expect((expr) != 0, 0)
+#endif
 
 /*-************************************
 *  Memory routines
@@ -1050,52 +1060,6 @@ static inline int LZ4_decompress_safe(const char* source, char* dest, int compre
 /************************************************************************** */
 
 const unsigned char Packet::ZERO_KEY[32] = { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 };
-
-#ifdef ZT_TRACE
-
-const char *Packet::verbString(Verb v)
-{
-	switch(v) {
-		case VERB_NOP: return "NOP";
-		case VERB_HELLO: return "HELLO";
-		case VERB_ERROR: return "ERROR";
-		case VERB_OK: return "OK";
-		case VERB_WHOIS: return "WHOIS";
-		case VERB_RENDEZVOUS: return "RENDEZVOUS";
-		case VERB_FRAME: return "FRAME";
-		case VERB_EXT_FRAME: return "EXT_FRAME";
-		case VERB_ECHO: return "ECHO";
-		case VERB_MULTICAST_LIKE: return "MULTICAST_LIKE";
-		case VERB_NETWORK_CREDENTIALS: return "NETWORK_CREDENTIALS";
-		case VERB_NETWORK_CONFIG_REQUEST: return "NETWORK_CONFIG_REQUEST";
-		case VERB_NETWORK_CONFIG: return "NETWORK_CONFIG";
-		case VERB_MULTICAST_GATHER: return "MULTICAST_GATHER";
-		case VERB_MULTICAST_FRAME: return "MULTICAST_FRAME";
-		case VERB_PUSH_DIRECT_PATHS: return "PUSH_DIRECT_PATHS";
-		case VERB_CIRCUIT_TEST: return "CIRCUIT_TEST";
-		case VERB_CIRCUIT_TEST_REPORT: return "CIRCUIT_TEST_REPORT";
-		case VERB_USER_MESSAGE: return "USER_MESSAGE";
-	}
-	return "(unknown)";
-}
-
-const char *Packet::errorString(ErrorCode e)
-{
-	switch(e) {
-		case ERROR_NONE: return "NONE";
-		case ERROR_INVALID_REQUEST: return "INVALID_REQUEST";
-		case ERROR_BAD_PROTOCOL_VERSION: return "BAD_PROTOCOL_VERSION";
-		case ERROR_OBJ_NOT_FOUND: return "OBJECT_NOT_FOUND";
-		case ERROR_IDENTITY_COLLISION: return "IDENTITY_COLLISION";
-		case ERROR_UNSUPPORTED_OPERATION: return "UNSUPPORTED_OPERATION";
-		case ERROR_NEED_MEMBERSHIP_CERTIFICATE: return "NEED_MEMBERSHIP_CERTIFICATE";
-		case ERROR_NETWORK_ACCESS_DENIED_: return "NETWORK_ACCESS_DENIED";
-		case ERROR_UNWANTED_MULTICAST: return "UNWANTED_MULTICAST";
-	}
-	return "(unknown)";
-}
-
-#endif // ZT_TRACE
 
 void Packet::armor(const void *key,bool encryptPayload,unsigned int counter)
 {

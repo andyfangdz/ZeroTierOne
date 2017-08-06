@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,14 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #ifndef ZT_HASHTABLE_HPP
@@ -111,7 +119,7 @@ public:
 		_s(0)
 	{
 		if (!_t)
-			throw std::bad_alloc();
+			throw ZT_EXCEPTION_OUT_OF_MEMORY;
 		for(unsigned long i=0;i<bc;++i)
 			_t[i] = (_Bucket *)0;
 	}
@@ -122,7 +130,7 @@ public:
 		_s(ht._s)
 	{
 		if (!_t)
-			throw std::bad_alloc();
+			throw ZT_EXCEPTION_OUT_OF_MEMORY;
 		for(unsigned long i=0;i<_bc;++i)
 			_t[i] = (_Bucket *)0;
 		for(unsigned long i=0;i<_bc;++i) {
@@ -351,12 +359,12 @@ public:
 	/**
 	 * @return Number of entries
 	 */
-	inline unsigned long size() const throw() { return _s; }
+	inline unsigned long size() const { return _s; }
 
 	/**
 	 * @return True if table is empty
 	 */
-	inline bool empty() const throw() { return (_s == 0); }
+	inline bool empty() const { return (_s == 0); }
 
 private:
 	template<typename O>
@@ -366,12 +374,7 @@ private:
 	}
 	static inline unsigned long _hc(const uint64_t i)
 	{
-		/* NOTE: this assumes that 'i' is evenly distributed, which is the case for
-		 * packet IDs and network IDs -- the two use cases in ZT for uint64_t keys.
-		 * These values are also greater than 0xffffffff so they'll map onto a full
-		 * bucket count just fine no matter what happens. Normally you'd want to
-		 * hash an integer key index in a hash table. */
-		return (unsigned long)i;
+		return (unsigned long)(i ^ (i >> 32)); // good for network IDs and addresses
 	}
 	static inline unsigned long _hc(const uint32_t i)
 	{

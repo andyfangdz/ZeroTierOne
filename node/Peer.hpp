@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,14 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #ifndef ZT_PEER_HPP
@@ -43,6 +51,8 @@
 #include "Mutex.hpp"
 #include "NonCopyable.hpp"
 
+#define ZT_PEER_MAX_SERIALIZED_STATE_SIZE (sizeof(Peer) + 32 + (sizeof(Path) * 2))
+
 namespace ZeroTier {
 
 /**
@@ -71,12 +81,12 @@ public:
 	/**
 	 * @return This peer's ZT address (short for identity().address())
 	 */
-	inline const Address &address() const throw() { return _id.address(); }
+	inline const Address &address() const { return _id.address(); }
 
 	/**
 	 * @return This peer's identity
 	 */
-	inline const Identity &identity() const throw() { return _id; }
+	inline const Identity &identity() const { return _id; }
 
 	/**
 	 * Log receipt of an authenticated packet
@@ -92,6 +102,7 @@ public:
 	 * @param inRePacketId Packet ID in reply to (default: none)
 	 * @param inReVerb Verb in reply to (for OK/ERROR, default: VERB_NOP)
 	 * @param trustEstablished If true, some form of non-trivial trust (like allowed in network) has been established
+	 * @param networkId Network ID if this pertains to a network, or 0 otherwise
 	 */
 	void received(
 		void *tPtr,
@@ -101,7 +112,8 @@ public:
 		const Packet::Verb verb,
 		const uint64_t inRePacketId,
 		const Packet::Verb inReVerb,
-		const bool trustEstablished);
+		const bool trustEstablished,
+		const uint64_t networkId);
 
 	/**
 	 * @param now Current time
@@ -144,12 +156,12 @@ public:
 	 * No statistics or sent times are updated here.
 	 *
 	 * @param tPtr Thread pointer to be handed through to any callbacks called as a result of this call
-	 * @param localAddr Local address
+	 * @param localSocket Local source socket
 	 * @param atAddress Destination address
 	 * @param now Current time
 	 * @param counter Outgoing packet counter
 	 */
-	void sendHELLO(void *tPtr,const InetAddress &localAddr,const InetAddress &atAddress,uint64_t now,unsigned int counter);
+	void sendHELLO(void *tPtr,const int64_t localSocket,const InetAddress &atAddress,uint64_t now,unsigned int counter);
 
 	/**
 	 * Send ECHO (or HELLO for older peers) to this peer at the given address
@@ -157,13 +169,13 @@ public:
 	 * No statistics or sent times are updated here.
 	 *
 	 * @param tPtr Thread pointer to be handed through to any callbacks called as a result of this call
-	 * @param localAddr Local address
+	 * @param localSocket Local source socket
 	 * @param atAddress Destination address
 	 * @param now Current time
 	 * @param sendFullHello If true, always send a full HELLO instead of just an ECHO
 	 * @param counter Outgoing packet counter
 	 */
-	void attemptToContactAt(void *tPtr,const InetAddress &localAddr,const InetAddress &atAddress,uint64_t now,bool sendFullHello,unsigned int counter);
+	void attemptToContactAt(void *tPtr,const int64_t localSocket,const InetAddress &atAddress,uint64_t now,bool sendFullHello,unsigned int counter);
 
 	/**
 	 * Try a memorized or statically defined path if any are known
@@ -186,6 +198,20 @@ public:
 	bool doPingAndKeepalive(void *tPtr,uint64_t now,int inetAddressFamily);
 
 	/**
+	 * Specify remote path for this peer and forget others
+	 *
+	 * This overrides normal path learning and tells this peer to be found
+	 * at this address, at least within the address's family. Other address
+	 * families are not modified.
+	 *
+	 * @param tPtr Thread pointer to be handed through to any callbacks called as a result of this call
+	 * @param localSocket Local socket as supplied by external code
+	 * @param remoteAddress Remote address
+	 * @param now Current time
+	 */
+	void redirect(void *tPtr,const int64_t localSocket,const InetAddress &remoteAddress,const uint64_t now);
+
+	/**
 	 * Reset paths within a given IP scope and address family
 	 *
 	 * Resetting a path involves sending an ECHO to it and then deactivating
@@ -200,27 +226,14 @@ public:
 	{
 		Mutex::Lock _l(_paths_m);
 		if ((inetAddressFamily == AF_INET)&&(_v4Path.lr)&&(_v4Path.p->address().ipScope() == scope)) {
-			attemptToContactAt(tPtr,_v4Path.p->localAddress(),_v4Path.p->address(),now,false,_v4Path.p->nextOutgoingCounter());
+			attemptToContactAt(tPtr,_v4Path.p->localSocket(),_v4Path.p->address(),now,false,_v4Path.p->nextOutgoingCounter());
 			_v4Path.p->sent(now);
 			_v4Path.lr = 0; // path will not be used unless it speaks again
 		} else if ((inetAddressFamily == AF_INET6)&&(_v6Path.lr)&&(_v6Path.p->address().ipScope() == scope)) {
-			attemptToContactAt(tPtr,_v6Path.p->localAddress(),_v6Path.p->address(),now,false,_v6Path.p->nextOutgoingCounter());
+			attemptToContactAt(tPtr,_v6Path.p->localSocket(),_v6Path.p->address(),now,false,_v6Path.p->nextOutgoingCounter());
 			_v6Path.p->sent(now);
 			_v6Path.lr = 0; // path will not be used unless it speaks again
 		}
-	}
-
-	/**
-	 * Indicate that the given address was provided by a cluster as a preferred destination
-	 *
-	 * @param addr Address cluster prefers that we use
-	 */
-	inline void setClusterPreferred(const InetAddress &addr)
-	{
-		if (addr.ss_family == AF_INET)
-			_v4ClusterPreferred = addr;
-		else if (addr.ss_family == AF_INET6)
-			_v6ClusterPreferred = addr;
 	}
 
 	/**
@@ -308,18 +321,6 @@ public:
 			_latency = (ol + std::min(l,(unsigned int)65535)) / 2;
 		else _latency = std::min(l,(unsigned int)65535);
 	}
-
-#ifdef ZT_ENABLE_CLUSTER
-	/**
-	 * @param now Current time
-	 * @return True if this peer has at least one active direct path that is not cluster-suboptimal
-	 */
-	inline bool hasLocalClusterOptimalPath(uint64_t now) const
-	{
-		Mutex::Lock _l(_paths_m);
-		return ( ((_v4Path.p)&&(_v4Path.p->alive(now))&&(!_v4Path.localClusterSuboptimal)) || ((_v6Path.p)&&(_v6Path.p->alive(now))&&(!_v6Path.localClusterSuboptimal)) );
-	}
-#endif
 
 	/**
 	 * @return 256-bit secret symmetric encryption key
@@ -441,16 +442,10 @@ public:
 private:
 	struct _PeerPath
 	{
-#ifdef ZT_ENABLE_CLUSTER
-		_PeerPath() : lr(0),p(),localClusterSuboptimal(false) {}
-#else
-		_PeerPath() : lr(0),p() {}
-#endif
+		_PeerPath() : lr(0),sticky(0),p() {}
 		uint64_t lr; // time of last valid ZeroTier packet
+		uint64_t sticky; // time last set as sticky
 		SharedPtr<Path> p;
-#ifdef ZT_ENABLE_CLUSTER
-		bool localClusterSuboptimal; // true if our cluster has determined that we should not be serving this peer
-#endif
 	};
 
 	uint8_t _key[ZT_PEER_SECRET_KEY_LENGTH];
@@ -474,9 +469,6 @@ private:
 	uint16_t _vMajor;
 	uint16_t _vMinor;
 	uint16_t _vRevision;
-
-	InetAddress _v4ClusterPreferred;
-	InetAddress _v6ClusterPreferred;
 
 	_PeerPath _v4Path; // IPv4 direct path
 	_PeerPath _v6Path; // IPv6 direct path

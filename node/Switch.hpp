@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,14 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #ifndef ZT_N_SWITCH_HPP
@@ -60,12 +68,12 @@ public:
 	 * Called when a packet is received from the real network
 	 *
 	 * @param tPtr Thread pointer to be handed through to any callbacks called as a result of this call
-	 * @param localAddr Local interface address
+	 * @param localSocket Local I/O socket as supplied by external code
 	 * @param fromAddr Internet IP address of origin
 	 * @param data Packet data
 	 * @param len Packet length
 	 */
-	void onRemotePacket(void *tPtr,const InetAddress &localAddr,const InetAddress &fromAddr,const void *data,unsigned int len);
+	void onRemotePacket(void *tPtr,const int64_t localSocket,const InetAddress &fromAddr,const void *data,unsigned int len);
 
 	/**
 	 * Called when a packet comes from a local Ethernet tap
@@ -214,8 +222,8 @@ private:
 				y = a2.toInt();
 			}
 		}
-		inline unsigned long hashCode() const throw() { return ((unsigned long)x ^ (unsigned long)y); }
-		inline bool operator==(const _LastUniteKey &k) const throw() { return ((x == k.x)&&(y == k.y)); }
+		inline unsigned long hashCode() const { return ((unsigned long)x ^ (unsigned long)y); }
+		inline bool operator==(const _LastUniteKey &k) const { return ((x == k.x)&&(y == k.y)); }
 		uint64_t x,y;
 	};
 	Hashtable< _LastUniteKey,uint64_t > _lastUniteAttempt; // key is always sorted in ascending order, for set-like behavior

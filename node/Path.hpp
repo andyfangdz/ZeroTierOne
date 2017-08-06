@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,14 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #ifndef ZT_PATH_HPP
@@ -58,49 +66,28 @@ public:
 	public:
 		HashKey() {}
 
-		HashKey(const InetAddress &l,const InetAddress &r)
+		HashKey(const int64_t l,const InetAddress &r)
 		{
-			// This is an ad-hoc bit packing algorithm to yield unique keys for
-			// remote addresses and their local-side counterparts if defined.
-			// Portability across runtimes is not needed.
 			if (r.ss_family == AF_INET) {
 				_k[0] = (uint64_t)reinterpret_cast<const struct sockaddr_in *>(&r)->sin_addr.s_addr;
 				_k[1] = (uint64_t)reinterpret_cast<const struct sockaddr_in *>(&r)->sin_port;
-				if (l.ss_family == AF_INET) {
-					_k[2] = (uint64_t)reinterpret_cast<const struct sockaddr_in *>(&l)->sin_addr.s_addr;
-					_k[3] = (uint64_t)reinterpret_cast<const struct sockaddr_in *>(&r)->sin_port;
-				} else {
-					_k[2] = 0;
-					_k[3] = 0;
-				}
+				_k[2] = (uint64_t)l;
 			} else if (r.ss_family == AF_INET6) {
-				const uint8_t *a = reinterpret_cast<const uint8_t *>(reinterpret_cast<const struct sockaddr_in6 *>(&r)->sin6_addr.s6_addr);
-				uint8_t *b = reinterpret_cast<uint8_t *>(_k);
-				for(unsigned int i=0;i<16;++i) b[i] = a[i];
-				_k[2] = ~((uint64_t)reinterpret_cast<const struct sockaddr_in6 *>(&r)->sin6_port);
-				if (l.ss_family == AF_INET6) {
-					_k[2] ^= ((uint64_t)reinterpret_cast<const struct sockaddr_in6 *>(&r)->sin6_port) << 32;
-					a = reinterpret_cast<const uint8_t *>(reinterpret_cast<const struct sockaddr_in6 *>(&l)->sin6_addr.s6_addr);
-					b += 24;
-					for(unsigned int i=0;i<8;++i) b[i] = a[i];
-					a += 8;
-					for(unsigned int i=0;i<8;++i) b[i] ^= a[i];
-				}
+				memcpy(_k,reinterpret_cast<const struct sockaddr_in6 *>(&r)->sin6_addr.s6_addr,16);
+				_k[2] = ((uint64_t)reinterpret_cast<const struct sockaddr_in6 *>(&r)->sin6_port << 32) ^ (uint64_t)l;
 			} else {
-				_k[0] = 0;
-				_k[1] = 0;
-				_k[2] = 0;
-				_k[3] = 0;
+				memcpy(_k,&r,std::min(sizeof(_k),sizeof(InetAddress)));
+				_k[2] += (uint64_t)l;
 			}
 		}
 
-		inline unsigned long hashCode() const { return (unsigned long)(_k[0] + _k[1] + _k[2] + _k[3]); }
+		inline unsigned long hashCode() const { return (unsigned long)(_k[0] + _k[1] + _k[2]); }
 
-		inline bool operator==(const HashKey &k) const { return ( (_k[0] == k._k[0]) && (_k[1] == k._k[1]) && (_k[2] == k._k[2]) && (_k[3] == k._k[3]) ); }
+		inline bool operator==(const HashKey &k) const { return ( (_k[0] == k._k[0]) && (_k[1] == k._k[1]) && (_k[2] == k._k[2]) ); }
 		inline bool operator!=(const HashKey &k) const { return (!(*this == k)); }
 
 	private:
-		uint64_t _k[4];
+		uint64_t _k[3];
 	};
 
 	Path() :
@@ -108,29 +95,29 @@ public:
 		_lastIn(0),
 		_lastTrustEstablishedPacketReceived(0),
 		_incomingLinkQualityFastLog(0xffffffffffffffffULL),
+		_localSocket(-1),
 		_incomingLinkQualitySlowLogPtr(0),
 		_incomingLinkQualitySlowLogCounter(-64), // discard first fast log
 		_incomingLinkQualityPreviousPacketCounter(0),
 		_outgoingPacketCounter(0),
 		_addr(),
-		_localAddress(),
 		_ipScope(InetAddress::IP_SCOPE_NONE)
 	{
 		for(int i=0;i<(int)sizeof(_incomingLinkQualitySlowLog);++i)
 			_incomingLinkQualitySlowLog[i] = ZT_PATH_LINK_QUALITY_MAX;
 	}
 
-	Path(const InetAddress &localAddress,const InetAddress &addr) :
+	Path(const int64_t localSocket,const InetAddress &addr) :
 		_lastOut(0),
 		_lastIn(0),
 		_lastTrustEstablishedPacketReceived(0),
 		_incomingLinkQualityFastLog(0xffffffffffffffffULL),
+		_localSocket(localSocket),
 		_incomingLinkQualitySlowLogPtr(0),
 		_incomingLinkQualitySlowLogCounter(-64), // discard first fast log
 		_incomingLinkQualityPreviousPacketCounter(0),
 		_outgoingPacketCounter(0),
 		_addr(addr),
-		_localAddress(localAddress),
 		_ipScope(addr.ipScope())
 	{
 		for(int i=0;i<(int)sizeof(_incomingLinkQualitySlowLog);++i)
@@ -202,9 +189,9 @@ public:
 	inline void sent(const uint64_t t) { _lastOut = t; }
 
 	/**
-	 * @return Address of local side of this path or NULL if unspecified
+	 * @return Local socket as specified by external code
 	 */
-	inline const InetAddress &localAddress() const { return _localAddress; }
+	inline const int64_t localSocket() const { return _localSocket; }
 
 	/**
 	 * @return Physical address
@@ -292,6 +279,11 @@ public:
 	inline uint64_t lastIn() const { return _lastIn; }
 
 	/**
+	 * @return Time last trust-established packet was received
+	 */
+	inline uint64_t lastTrustEstablishedPacketReceived() const { return _lastTrustEstablishedPacketReceived; }
+
+	/**
 	 * Return and increment outgoing packet counter (used with Packet::armor())
 	 *
 	 * @return Next value that should be used for outgoing packet counter (only least significant 3 bits are used)
@@ -303,12 +295,12 @@ private:
 	volatile uint64_t _lastIn;
 	volatile uint64_t _lastTrustEstablishedPacketReceived;
 	volatile uint64_t _incomingLinkQualityFastLog;
+	int64_t _localSocket;
 	volatile unsigned long _incomingLinkQualitySlowLogPtr;
 	volatile signed int _incomingLinkQualitySlowLogCounter;
 	volatile unsigned int _incomingLinkQualityPreviousPacketCounter;
 	volatile unsigned int _outgoingPacketCounter;
 	InetAddress _addr;
-	InetAddress _localAddress;
 	InetAddress::IpScope _ipScope; // memoize this since it's a computed value checked often
 	volatile uint8_t _incomingLinkQualitySlowLog[32];
 	AtomicCounter __refCount;

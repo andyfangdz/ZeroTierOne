@@ -28,6 +28,8 @@
 #include <stdexcept>
 #include <vector>
 #include <algorithm>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "../node/Constants.hpp"
 #include "../node/Utils.hpp"
@@ -46,69 +48,142 @@ namespace ZeroTier {
 class JSONDB
 {
 public:
-	JSONDB(const std::string &basePath);
+	struct NetworkSummaryInfo
+	{
+		NetworkSummaryInfo() : authorizedMemberCount(0),activeMemberCount(0),totalMemberCount(0),mostRecentDeauthTime(0) {}
+		std::vector<Address> activeBridges;
+		std::vector<InetAddress> allocatedIps;
+		unsigned long authorizedMemberCount;
+		unsigned long activeMemberCount;
+		unsigned long totalMemberCount;
+		uint64_t mostRecentDeauthTime;
+	};
 
+	JSONDB(const std::string &basePath);
+	~JSONDB();
+
+	/**
+	 * Write a JSON object to the data store
+	 *
+	 * It's important that obj contain a valid JSON object with no newlines (jsonDump with -1
+	 * for indentation), since newline-delimited JSON is what nodeJS's IPC speaks and this
+	 * is important in Central-harnessed mode.
+	 *
+	 * @param n Path name of object
+	 * @param obj Object in single-line no-CRs JSON object format (OSUtils::jsonDump(obj,-1))
+	 * @return True if write appears successful
+	 */
 	bool writeRaw(const std::string &n,const std::string &obj);
 
-	bool put(const std::string &n,const nlohmann::json &obj);
+	bool hasNetwork(const uint64_t networkId) const;
 
-	inline bool put(const std::string &n1,const std::string &n2,const nlohmann::json &obj) { return this->put((n1 + "/" + n2),obj); }
-	inline bool put(const std::string &n1,const std::string &n2,const std::string &n3,const nlohmann::json &obj) { return this->put((n1 + "/" + n2 + "/" + n3),obj); }
-	inline bool put(const std::string &n1,const std::string &n2,const std::string &n3,const std::string &n4,const nlohmann::json &obj) { return this->put((n1 + "/" + n2 + "/" + n3 + "/" + n4),obj); }
-	inline bool put(const std::string &n1,const std::string &n2,const std::string &n3,const std::string &n4,const std::string &n5,const nlohmann::json &obj) { return this->put((n1 + "/" + n2 + "/" + n3 + "/" + n4 + "/" + n5),obj); }
+	bool getNetwork(const uint64_t networkId,nlohmann::json &config) const;
 
-	const nlohmann::json &get(const std::string &n);
+	bool getNetworkSummaryInfo(const uint64_t networkId,NetworkSummaryInfo &ns) const;
 
-	inline const nlohmann::json &get(const std::string &n1,const std::string &n2) { return this->get((n1 + "/" + n2)); }
-	inline const nlohmann::json &get(const std::string &n1,const std::string &n2,const std::string &n3) { return this->get((n1 + "/" + n2 + "/" + n3)); }
-	inline const nlohmann::json &get(const std::string &n1,const std::string &n2,const std::string &n3,const std::string &n4) { return this->get((n1 + "/" + n2 + "/" + n3 + "/" + n4)); }
-	inline const nlohmann::json &get(const std::string &n1,const std::string &n2,const std::string &n3,const std::string &n4,const std::string &n5) { return this->get((n1 + "/" + n2 + "/" + n3 + "/" + n4 + "/" + n5)); }
+	/**
+	 * @return Bit mask: 0 == none, 1 == network only, 3 == network and member
+	 */
+	int getNetworkAndMember(const uint64_t networkId,const uint64_t nodeId,nlohmann::json &networkConfig,nlohmann::json &memberConfig,NetworkSummaryInfo &ns) const;
 
-	void erase(const std::string &n);
+	bool getNetworkMember(const uint64_t networkId,const uint64_t nodeId,nlohmann::json &memberConfig) const;
 
-	inline void erase(const std::string &n1,const std::string &n2) { this->erase(n1 + "/" + n2); }
-	inline void erase(const std::string &n1,const std::string &n2,const std::string &n3) { this->erase(n1 + "/" + n2 + "/" + n3); }
-	inline void erase(const std::string &n1,const std::string &n2,const std::string &n3,const std::string &n4) { this->erase(n1 + "/" + n2 + "/" + n3 + "/" + n4); }
-	inline void erase(const std::string &n1,const std::string &n2,const std::string &n3,const std::string &n4,const std::string &n5) { this->erase(n1 + "/" + n2 + "/" + n3 + "/" + n4 + "/" + n5); }
+	void saveNetwork(const uint64_t networkId,const nlohmann::json &networkConfig);
+
+	void saveNetworkMember(const uint64_t networkId,const uint64_t nodeId,const nlohmann::json &memberConfig);
+
+	nlohmann::json eraseNetwork(const uint64_t networkId);
+
+	nlohmann::json eraseNetworkMember(const uint64_t networkId,const uint64_t nodeId,bool recomputeSummaryInfo = true);
+
+	std::vector<uint64_t> networkIds() const
+	{
+		std::vector<uint64_t> r;
+		Mutex::Lock _l(_networks_m);
+		for(std::unordered_map<uint64_t,_NW>::const_iterator n(_networks.begin());n!=_networks.end();++n)
+			r.push_back(n->first);
+		return r;
+	}
+
+	inline unsigned long memberCount(const uint64_t networkId)
+	{
+		Mutex::Lock _l(_networks_m);
+		std::unordered_map<uint64_t,_NW>::const_iterator i(_networks.find(networkId));
+		if (i != _networks.end())
+			return (unsigned long)i->second.members.size();
+		return 0;
+	}
 
 	template<typename F>
-	inline void filter(const std::string &prefix,F func)
+	inline void eachMember(const uint64_t networkId,F func)
 	{
-		while (!_ready) {
-			Thread::sleep(250);
-			_ready = _reload(_basePath,std::string());
-		}
-
-		for(std::map<std::string,_E>::iterator i(_db.lower_bound(prefix));i!=_db.end();) {
-			if ((i->first.length() >= prefix.length())&&(!memcmp(i->first.data(),prefix.data(),prefix.length()))) {
-				if (!func(i->first,get(i->first))) {
-					std::map<std::string,_E>::iterator i2(i); ++i2;
-					this->erase(i->first);
-					i = i2;
-				} else ++i;
-			} else break;
+		Mutex::Lock _l(_networks_m);
+		std::unordered_map<uint64_t,_NW>::const_iterator i(_networks.find(networkId));
+		if (i != _networks.end()) {
+			for(std::unordered_map< uint64_t,std::vector<uint8_t> >::const_iterator m(i->second.members.begin());m!=i->second.members.end();++m) {
+				try {
+					func(networkId,m->first,nlohmann::json::from_msgpack(m->second));
+				} catch ( ... ) {}
+			}
 		}
 	}
 
-	inline bool operator==(const JSONDB &db) const { return ((_basePath == db._basePath)&&(_db == db._db)); }
-	inline bool operator!=(const JSONDB &db) const { return (!(*this == db)); }
+	template<typename F>
+	inline void eachId(F func)
+	{
+		Mutex::Lock _l(_networks_m);
+		for(std::unordered_map<uint64_t,_NW>::const_iterator i(_networks.begin());i!=_networks.end();++i) {
+			for(std::unordered_map< uint64_t,std::vector<uint8_t> >::const_iterator m(i->second.members.begin());m!=i->second.members.end();++m) {
+				try {
+					func(i->first,m->first);
+				} catch ( ... ) {}
+			}
+		}
+	}
+
+	inline std::vector<uint64_t> networksForMember(const uint64_t nodeId)
+	{
+		Mutex::Lock _l(_networks_m);
+		std::unordered_map< uint64_t,std::unordered_set< uint64_t > >::const_iterator m(_members.find(nodeId));
+		if (m != _members.end()) {
+			return std::vector<uint64_t>(m->second.begin(),m->second.end());
+		} else {
+			return std::vector<uint64_t>();
+		}
+	}
+
+	void threadMain()
+		throw();
 
 private:
-	bool _reload(const std::string &p,const std::string &b);
-	bool _isValidObjectName(const std::string &n);
+	bool _add(const nlohmann::json &j);
+	bool _load(const std::string &p);
+	void _recomputeSummaryInfo(const uint64_t networkId);
 	std::string _genPath(const std::string &n,bool create);
 
-	struct _E
+	std::string _basePath;
+	InetAddress _httpAddr;
+	int _rawInput,_rawOutput;
+	Mutex _rawLock;
+
+	Thread _summaryThread;
+	std::vector<uint64_t> _summaryThreadToDo;
+	volatile bool _summaryThreadRun;
+	Mutex _summaryThread_m;
+
+	struct _NW
 	{
-		nlohmann::json obj;
-		inline bool operator==(const _E &e) const { return (obj == e.obj); }
-		inline bool operator!=(const _E &e) const { return (obj != e.obj); }
+		_NW() : summaryInfoLastComputed(0) {}
+		std::vector<uint8_t> config;
+		NetworkSummaryInfo summaryInfo;
+		uint64_t summaryInfoLastComputed;
+		std::unordered_map< uint64_t,std::vector<uint8_t> > members;
 	};
 
-	InetAddress _httpAddr;
-	std::string _basePath;
-	std::map<std::string,_E> _db;
-	volatile bool _ready;
+	std::unordered_map< uint64_t,_NW > _networks;
+	std::unordered_map< uint64_t,std::unordered_set< uint64_t > > _members;
+	bool _dataReady;
+	Mutex _networks_m;
 };
 
 } // namespace ZeroTier

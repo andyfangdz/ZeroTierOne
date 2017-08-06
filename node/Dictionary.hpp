@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,14 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #ifndef ZT_DICTIONARY_HPP
@@ -90,6 +98,8 @@ public:
 		Utils::scopy(_d,sizeof(_d),d._d);
 		return *this;
 	}
+
+	inline operator bool() const { return (_d[0] != 0); }
 
 	/**
 	 * Load a dictionary from a C-string
@@ -279,6 +289,21 @@ public:
 	}
 
 	/**
+	 * Get an unsigned int64 stored as hex in the dictionary
+	 *
+	 * @param key Key to look up
+	 * @param dfl Default value or 0 if unspecified
+	 * @return Decoded hex UInt value or 'dfl' if not found
+	 */
+	inline int64_t getI(const char *key,int64_t dfl = 0) const
+	{
+		char tmp[128];
+		if (this->get(key,tmp,sizeof(tmp)) >= 1)
+			return Utils::hexStrTo64(tmp);
+		return dfl;
+	}
+
+	/**
 	 * Add a new key=value pair
 	 *
 	 * If the key is already present this will append another, but the first
@@ -381,8 +406,21 @@ public:
 	inline bool add(const char *key,uint64_t value)
 	{
 		char tmp[32];
-		Utils::snprintf(tmp,sizeof(tmp),"%llx",(unsigned long long)value);
-		return this->add(key,tmp,-1);
+		return this->add(key,Utils::hex(value,tmp),-1);
+	}
+
+	/** 
+	 * Add a 64-bit integer (unsigned) as a hex value
+	 */
+	inline bool add(const char *key,int64_t value)
+	{
+		char tmp[32];
+		if (value >= 0) {
+			return this->add(key,Utils::hex((uint64_t)value,tmp),-1);
+		} else {
+			tmp[0] = '-';
+			return this->add(key,Utils::hex((uint64_t)(value * -1),tmp+1),-1);
+		}
 	}
 
 	/** 
@@ -391,8 +429,7 @@ public:
 	inline bool add(const char *key,const Address &a)
 	{
 		char tmp[32];
-		Utils::snprintf(tmp,sizeof(tmp),"%.10llx",(unsigned long long)a.toInt());
-		return this->add(key,tmp,-1);
+		return this->add(key,Utils::hex(a.toInt(),tmp),-1);
 	}
 
 	/**

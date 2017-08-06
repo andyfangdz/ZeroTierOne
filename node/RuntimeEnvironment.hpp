@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,16 +14,24 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #ifndef ZT_RUNTIMEENVIRONMENT_HPP
 #define ZT_RUNTIMEENVIRONMENT_HPP
 
-#include <string>
+#include <string.h>
 
 #include "Constants.hpp"
+#include "Utils.hpp"
 #include "Identity.hpp"
-#include "Mutex.hpp"
 
 namespace ZeroTier {
 
@@ -34,7 +42,7 @@ class Node;
 class Multicaster;
 class NetworkController;
 class SelfAwareness;
-class Cluster;
+class Trace;
 
 /**
  * Holds global state for an instance of ZeroTier::Node
@@ -50,19 +58,29 @@ public:
 		,mc((Multicaster *)0)
 		,topology((Topology *)0)
 		,sa((SelfAwareness *)0)
-#ifdef ZT_ENABLE_CLUSTER
-		,cluster((Cluster *)0)
-#endif
 	{
+		Utils::getSecureRandom(&instanceId,sizeof(instanceId));
+		memset(publicIdentityStr,0,sizeof(publicIdentityStr));
+		memset(secretIdentityStr,0,sizeof(secretIdentityStr));
 	}
+
+	~RuntimeEnvironment()
+	{
+		Utils::burn(secretIdentityStr,sizeof(secretIdentityStr));
+	}
+
+	/**
+	 * A random integer identifying this running instance in a cluster
+	 */
+	uint64_t instanceId;
 
 	// Node instance that owns this RuntimeEnvironment
 	Node *const node;
 
 	// This node's identity
 	Identity identity;
-	std::string publicIdentityStr;
-	std::string secretIdentityStr;
+	char publicIdentityStr[ZT_IDENTITY_STRING_BUFFER_LENGTH];
+	char secretIdentityStr[ZT_IDENTITY_STRING_BUFFER_LENGTH];
 
 	// This is set externally to an instance of this base class
 	NetworkController *localNetworkController;
@@ -75,13 +93,11 @@ public:
 	 * These are constant and never null after startup unless indicated.
 	 */
 
+	Trace *t;
 	Switch *sw;
 	Multicaster *mc;
 	Topology *topology;
 	SelfAwareness *sa;
-#ifdef ZT_ENABLE_CLUSTER
-	Cluster *cluster;
-#endif
 };
 
 } // namespace ZeroTier

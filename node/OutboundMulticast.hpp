@@ -1,6 +1,6 @@
 /*
  * ZeroTier One - Network Virtualization Everywhere
- * Copyright (C) 2011-2016  ZeroTier, Inc.  https://www.zerotier.com/
+ * Copyright (C) 2011-2017  ZeroTier, Inc.  https://www.zerotier.com/
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -14,6 +14,14 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ *
+ * --
+ *
+ * You can be released from the requirements of the license by purchasing
+ * a commercial license. Buying such a license is mandatory as soon as you
+ * develop commercial closed-source software that incorporates or links
+ * directly against ZeroTier software without disclosing the source code
+ * of your own application.
  */
 
 #ifndef ZT_OUTBOUNDMULTICAST_HPP
@@ -82,18 +90,18 @@ public:
 	/**
 	 * @return Multicast creation time
 	 */
-	inline uint64_t timestamp() const throw() { return _timestamp; }
+	inline uint64_t timestamp() const { return _timestamp; }
 
 	/**
 	 * @param now Current time
 	 * @return True if this multicast is expired (has exceeded transmit timeout)
 	 */
-	inline bool expired(uint64_t now) const throw() { return ((now - _timestamp) >= ZT_MULTICAST_TRANSMIT_TIMEOUT); }
+	inline bool expired(uint64_t now) const { return ((now - _timestamp) >= ZT_MULTICAST_TRANSMIT_TIMEOUT); }
 
 	/**
 	 * @return True if this outbound multicast has been sent to enough peers
 	 */
-	inline bool atLimit() const throw() { return (_alreadySentTo.size() >= _limit); }
+	inline bool atLimit() const { return (_alreadySentTo.size() >= _limit); }
 
 	/**
 	 * Just send without checking log
